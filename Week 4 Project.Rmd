@@ -1,0 +1,122 @@
+---
+title: "Week 4 Project"
+author: "Joseph Biel"
+date: "2/19/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+```
+
+## Practicle Machine Learning Week 4 Project
+### Background
+The goal of this project is to produce a model that predicts how well a person is performing an execise based upon data collected from accelerometers mounted on the person's belt, forearm, arm, and dumbell.
+
+### Get the Exercise Training and Test Datasets
+The first step is to read the exercise data from its website. The data consists of two parts -- a training data set that will be used to create a model and a testing data set that will be used to test the model predictions on an independent set of observations.
+
+```{r getData}
+train.read<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+test.read <-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+
+### Select a Useful Subset of Variables
+As read from the website, the training data has `r nrow(train.read)` rows -- each row with `r ncol(train.read)-1` columns of potential prediction variables and a single column of the variable to be predicted ("classe"). From this large number of variables, a subset was selected that are most-closely associated with the position, acceleration, and orientation of the sensors attached to the body. Those variables are most likely to be useful to determine if the exercize is being performed correctly.
+
+```{r subsetData, echo=FALSE}
+s<-c("num_window",          "roll_belt",           "pitch_belt",          "yaw_belt",
+     "total_accel_belt",    "gyros_belt_x",        "gyros_belt_y",        "gyros_belt_z",       
+     "accel_belt_x",        "accel_belt_y",        "accel_belt_z",        "magnet_belt_x",
+     "magnet_belt_y",       "magnet_belt_z",       "roll_arm",            "pitch_arm",          
+     "yaw_arm",             "total_accel_arm",     "gyros_arm_x",         "gyros_arm_y",        
+     "gyros_arm_z",         "accel_arm_x",         "accel_arm_y",         "accel_arm_z",        
+     "magnet_arm_x",        "magnet_arm_y",        "magnet_arm_z",        "roll_dumbbell",      
+     "pitch_dumbbell",      "yaw_dumbbell",        "gyros_dumbbell_x",    "gyros_dumbbell_y",   
+     "gyros_dumbbell_z",    "accel_dumbbell_x",    "accel_dumbbell_y",    "accel_dumbbell_z",   
+     "magnet_dumbbell_x",   "magnet_dumbbell_y",   "magnet_dumbbell_z",   "roll_forearm",       
+     "pitch_forearm",       "yaw_forearm",         "total_accel_forearm", "gyros_forearm_x",    
+     "gyros_forearm_y",     "gyros_forearm_z",     "accel_forearm_x",     "accel_forearm_y",    
+     "accel_forearm_z",     "magnet_forearm_x",    "magnet_forearm_y",    "magnet_forearm_z")
+train.subset<-train.read %>% select(all_of(s))
+train.subset<-cbind(train.subset, train.read["classe"])
+train.subset[,53]<-as.factor(train.subset[,53])
+test.subset <-test.read %>% select(all_of(s))
+```
+
+The selected subset contains `r ncol(test.subset)` prediction variables with the following variables: `r s`.
+
+### Only Use Data Rows With Complete Data
+Only training data table rows that have values for all columns will be used. 
+
+```{r completeData, include=FALSE}
+train.complete<-train.subset[complete.cases(train.subset),]
+```
+
+This condition resulted in the removal of `r nrow(train.subset) - nrow(train.complete)` rows.
+
+### Normalize the training data
+To improve the quality of the models to be produced, the variable for each column is then normalized so that it has a mean of zero and a standard deviation of one.
+
+```{r normalizeTrainingData, include=FALSE}
+train.nrows<-nrow(train.complete)
+train.ncols<-ncol(train.complete)
+train.pre<-preProcess(train.complete[,-(train.ncols)],method=c("center","scale"))
+train.norm<-predict(train.pre, train.complete[,-(train.ncols)])
+train.norm$classe<-train.complete$classe
+test.norm<-predict(train.pre, test.subset)
+```
+
+### Normalize the testing data using the mean and sigma of the training
+Also apply the same normalization to the test data columns as was done to the training data columns.
+
+```{r normalizeTestingData, include=FALSE}
+test.norm<-predict(train.pre, test.subset)
+```
+
+### Remove outlier rows where any column deviates more than 6 sigma from the mean
+In this case, an outlier is defined as a value that deviates more than 6 standard deviations from the normalized mean of zero.
+
+```{r removeOutliersData, include=FALSE}
+keep<-c(1:train.nrows)
+for (i in 1:train.nrows) {
+  keep[i]<-TRUE
+  for (j in 1:(train.ncols-1)) {
+    if ((train.norm[i,j] < -6) || (train.norm[i,j] > 6))
+      keep[i]<-FALSE
+  }
+}
+
+train.norm$keep<-keep
+train.prepared<-train.norm %>% filter(keep == 1) %>% select(-keep)
+```
+
+`r train.nrows - nrow(train.prepared)` rows containing outliers were removed from the training data.
+
+### Build a model using random forests and 10-fold cross validation
+```{r rffK10Model}
+model.rf.k10<-train(classe ~ ., data=train.prepared, 
+trControl=trainControl(method="cv", number=10), method="rf")
+model.rf.k10
+```
+
+The model results indicate that the estimated out-of-sample accuracy is `r model.rf.k10$results$Accuracy[2]*100` percent.
+
+### Compare the prediction of the model with the training data
+The comparison is made by using a confusion matrix to compare the model prediction of classe with the actual value of classe. The comparison was performed using all of the training data that was used to produce the model.
+
+```{r modelPredictTrainingData, echo=FALSE}
+predict.rf.k10<-predict(model.rf.k10, train.prepared)
+confusionMatrix(predict.rf.k10, train.prepared$classe)$table
+```
+
+The confusion matrix establishes that the random forest model is very good at predicting classe.
+
+### Make predictions for the test data
+Finally, we use the random forest model produced from the training data to predict classe for the test data. The results are as follows:
+
+```{r modelPredictTestingData, echo=FALSE}
+predict(model.rf.k10, test.norm)
+```
